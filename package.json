@@ -1,0 +1,44 @@
+{
+  "name": "erc3643-asset-suite",
+  "version": "1.0.0",
+  "description": "ERC-3643 compliant security token suite for regulated asset management",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:gas": "REPORT_GAS=true hardhat test",
+    "test:coverage": "hardhat coverage",
+    "lint": "solhint 'contracts/**/*.sol'",
+    "lint:fix": "solhint 'contracts/**/*.sol' --fix",
+    "format": "prettier --write 'contracts/**/*.sol' 'scripts/**/*.js' 'test/**/*.js'",
+    "format:check": "prettier --check 'contracts/**/*.sol' 'scripts/**/*.js' 'test/**/*.js'",
+    "deploy:local": "hardhat ignition deploy ./ignition/modules/Token.js --network localhost",
+    "deploy:amoy": "hardhat run scripts/deploy.js --network amoy",
+    "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "verify": "hardhat verify",
+    "node": "hardhat node",
+    "clean": "hardhat clean"
+  },
+  "keywords": [
+    "solidity",
+    "erc3643",
+    "security-token",
+    "t-rex",
+    "hardhat",
+    "compliance"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.0",
+    "prettier": "^3.7.4",
+    "prettier-plugin-solidity": "^2.2.1",
+    "solhint": "^6.0.2"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0",
+    "dotenv": "^17.2.3"
+  }
+}
