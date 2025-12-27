@@ -10,6 +10,9 @@ ERC-3643 is a standard for security tokens that enables compliant token transfer
 - **Identity Registry**: Manages investor identities and verification
 - **Modular Compliance**: Flexible compliance rules via pluggable modules
 - **Compliance Modules**: Pre-built modules for common regulations
+- **Token Factory**: Deploy multiple tokens from a single factory
+- **UUPS Upgradeability**: All contracts are upgradeable via proxy pattern
+- **Role-Based Access Control**: Granular permissions for different operations
 
 ## Project Structure
 
@@ -17,20 +20,49 @@ ERC-3643 is a standard for security tokens that enables compliant token transfer
 erc3643-asset-suite/
 ├── contracts/
 │   ├── token/
-│   │   └── Token.sol                 # Main ERC-3643 token
+│   │   ├── Token.sol                         # Legacy ERC-3643 token
+│   │   └── TokenUpgradeable.sol              # UUPS upgradeable token
 │   ├── registry/
-│   │   └── IdentityRegistry.sol      # Investor identity management
+│   │   ├── IdentityRegistry.sol              # Legacy identity registry
+│   │   └── IdentityRegistryUpgradeable.sol   # UUPS upgradeable registry
 │   ├── compliance/
-│   │   ├── ModularCompliance.sol     # Modular compliance engine
+│   │   ├── ModularCompliance.sol             # Legacy compliance
+│   │   ├── ModularComplianceUpgradeable.sol  # UUPS upgradeable compliance
 │   │   └── modules/
-│   │       ├── CountryRestrictModule.sol  # Country-based restrictions
-│   │       └── MaxBalanceModule.sol       # Maximum balance limits
-│   └── interfaces/                   # Contract interfaces
-├── test/                             # Test files
-├── scripts/                          # Deployment scripts
-├── ignition/modules/                 # Hardhat Ignition modules
-└── hardhat.config.js
+│   │       ├── CountryRestrictModule.sol
+│   │       ├── CountryRestrictModuleUpgradeable.sol
+│   │       ├── MaxBalanceModule.sol
+│   │       └── MaxBalanceModuleUpgradeable.sol
+│   ├── factory/
+│   │   └── TokenFactory.sol                  # Token deployment factory
+│   ├── interfaces/                           # Contract interfaces
+│   └── Roles.sol                             # Access control roles
+├── test/
+│   ├── token/                                # Legacy tests
+│   ├── registry/
+│   ├── compliance/
+│   └── upgradeable/                          # Upgradeable contract tests
+├── scripts/
+│   ├── deploy.js                             # Legacy deployment
+│   └── deploy-upgradeable.js                 # Upgradeable deployment
+└── SECURITY.md                               # Security & audit docs
 ```
+
+## Access Control Roles
+
+The suite uses role-based access control with the following roles:
+
+| Role | Description |
+|------|-------------|
+| `DEFAULT_ADMIN_ROLE` | Can grant/revoke all roles |
+| `ADMIN_ROLE` | Contract configuration |
+| `UPGRADER_ROLE` | Upgrade contract implementations |
+| `AGENT_ROLE` | Mint, burn, wallet recovery |
+| `FREEZER_ROLE` | Freeze/unfreeze addresses and tokens |
+| `COMPLIANCE_MANAGER_ROLE` | Add/remove compliance modules |
+| `REGISTRY_MANAGER_ROLE` | Register/update investor identities |
+| `EMERGENCY_ROLE` | Pause/unpause operations |
+| `FACTORY_ROLE` | Deploy new token suites |
 
 ## Prerequisites
 
@@ -48,7 +80,9 @@ npm install
 | Command | Description |
 |---------|-------------|
 | `npm run compile` | Compile contracts |
-| `npm run test` | Run test suite |
+| `npm run test` | Run all tests (86 tests) |
+| `npm run test:upgradeable` | Run upgradeable contract tests |
+| `npm run test:legacy` | Run legacy contract tests |
 | `npm run test:gas` | Run tests with gas reporting |
 | `npm run test:coverage` | Generate coverage report |
 | `npm run lint` | Lint Solidity files |
@@ -56,11 +90,12 @@ npm install
 | `npm run format` | Format code with Prettier |
 | `npm run format:check` | Check code formatting |
 | `npm run node` | Start local Hardhat node |
-| `npm run deploy:local` | Deploy to local network |
-| `npm run deploy:amoy` | Deploy to Polygon Amoy testnet |
-| `npm run deploy:polygon` | Deploy to Polygon mainnet |
-| `npm run deploy:sepolia` | Deploy to Ethereum Sepolia testnet |
-| `npm run deploy:mainnet` | Deploy to Ethereum mainnet |
+| `npm run deploy:local` | Deploy legacy contracts locally |
+| `npm run deploy:local:upgradeable` | Deploy upgradeable contracts locally |
+| `npm run deploy:amoy` | Deploy upgradeable to Polygon Amoy |
+| `npm run deploy:polygon` | Deploy upgradeable to Polygon mainnet |
+| `npm run deploy:sepolia` | Deploy upgradeable to Sepolia |
+| `npm run deploy:mainnet` | Deploy upgradeable to Ethereum mainnet |
 | `npm run verify` | Verify contracts on block explorer |
 | `npm run clean` | Clean build artifacts |
 
@@ -287,6 +322,73 @@ maxBalanceModule.setMaxBalance(complianceAddress, 500e18);
     │ • (Add your own...)     │
     └─────────────────────────┘
 ```
+
+### Upgradeable Architecture (Production)
+
+```
+┌──────────────────────────────────────────────────┐
+│                  TokenFactory                     │
+│  (deploys complete token suites via proxies)     │
+└──────────────────┬───────────────────────────────┘
+                   │ deploys
+    ┌──────────────┼──────────────┐
+    ▼              ▼              ▼
+┌────────┐   ┌──────────┐   ┌────────────┐
+│ Token  │   │ Identity │   │ Compliance │
+│ Proxy  │   │ Registry │   │   Proxy    │
+│        │   │  Proxy   │   │            │
+└───┬────┘   └────┬─────┘   └─────┬──────┘
+    │             │               │
+    ▼             ▼               ▼
+┌────────┐   ┌──────────┐   ┌────────────┐
+│ Token  │   │ Registry │   │ Compliance │
+│  Impl  │   │   Impl   │   │    Impl    │
+│  v1.0  │   │   v1.0   │   │    v1.0    │
+└────────┘   └──────────┘   └────────────┘
+```
+
+## Token Factory Usage
+
+Deploy multiple security tokens using the factory:
+
+```solidity
+// Deploy a complete token suite (token + registry + compliance)
+(address token, address registry, address compliance) = factory.deployTokenSuite({
+    name: "Security Token",
+    symbol: "SEC",
+    tokenAdmin: adminAddress,
+    registryAdmin: adminAddress,
+    complianceAdmin: adminAddress
+});
+
+// Deploy token with existing infrastructure
+address newToken = factory.deployTokenOnly(
+    "Another Token",
+    "ANT",
+    existingRegistry,
+    existingCompliance,
+    adminAddress
+);
+
+// Get all deployed tokens
+address[] memory tokens = factory.getDeployedTokens();
+```
+
+## Upgrading Contracts
+
+Upgrade implementations without migrating data:
+
+```javascript
+const { upgrades } = require("hardhat");
+
+// Deploy new implementation
+const TokenV2 = await ethers.getContractFactory("TokenUpgradeableV2");
+
+// Upgrade (must have UPGRADER_ROLE)
+await upgrades.upgradeProxy(tokenProxyAddress, TokenV2);
+```
+
+**Important**: Always test upgrades on testnet first and follow the checklist in `SECURITY.md`.
 
 ## Creating Custom Compliance Modules
 

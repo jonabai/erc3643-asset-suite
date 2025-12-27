@@ -5,6 +5,8 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
+    "test:upgradeable": "hardhat test test/upgradeable/**/*.js",
+    "test:legacy": "hardhat test test/token/**/*.js test/registry/**/*.js test/compliance/**/*.js",
     "test:gas": "REPORT_GAS=true hardhat test",
     "test:coverage": "hardhat coverage",
     "lint": "solhint 'contracts/**/*.sol'",
@@ -12,10 +14,13 @@
     "format": "prettier --write 'contracts/**/*.sol' 'scripts/**/*.js' 'test/**/*.js'",
     "format:check": "prettier --check 'contracts/**/*.sol' 'scripts/**/*.js' 'test/**/*.js'",
     "deploy:local": "hardhat ignition deploy ./ignition/modules/Token.js --network localhost",
-    "deploy:amoy": "hardhat run scripts/deploy.js --network amoy",
-    "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
-    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
-    "deploy:mainnet": "hardhat run scripts/deploy.js --network mainnet",
+    "deploy:local:upgradeable": "hardhat run scripts/deploy-upgradeable.js --network localhost",
+    "deploy:amoy": "hardhat run scripts/deploy-upgradeable.js --network amoy",
+    "deploy:polygon": "hardhat run scripts/deploy-upgradeable.js --network polygon",
+    "deploy:sepolia": "hardhat run scripts/deploy-upgradeable.js --network sepolia",
+    "deploy:mainnet": "hardhat run scripts/deploy-upgradeable.js --network mainnet",
+    "deploy:legacy:amoy": "hardhat run scripts/deploy.js --network amoy",
+    "deploy:legacy:polygon": "hardhat run scripts/deploy.js --network polygon",
     "verify": "hardhat verify",
     "node": "hardhat node",
     "clean": "hardhat clean"
@@ -39,6 +44,8 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.0",
+    "@openzeppelin/contracts-upgradeable": "^5.4.0",
+    "@openzeppelin/hardhat-upgrades": "^3.9.1",
     "dotenv": "^17.2.3"
   }
 }
