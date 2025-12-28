@@ -1,19 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "../interfaces/IERC3643.sol";
 import "../interfaces/IIdentityRegistry.sol";
 import "../interfaces/ICompliance.sol";
+import "../Roles.sol";
 
 /**
  * @title Token
- * @dev ERC-3643 compliant security token implementation
+ * @dev UUPS upgradeable ERC-3643 compliant security token with role-based access control
  * @notice This token enforces compliance rules and identity verification for all transfers
  */
-contract Token is IERC3643, Ownable, ReentrancyGuard {
-    // ===== ERC-20 State Variables =====
+contract Token is
+    Initializable,
+    UUPSUpgradeable,
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
+    IERC3643
+{
+    // ===== Storage =====
+    // Note: Storage layout must remain consistent across upgrades
+
     string private _name;
     string private _symbol;
     uint8 private constant _decimals = 18;
@@ -22,80 +35,76 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
 
-    // ===== ERC-3643 State Variables =====
     address private _identityRegistry;
     address private _compliance;
 
     mapping(address => bool) private _frozen;
     mapping(address => uint256) private _frozenTokens;
 
-    bool private _paused;
-
-    // ===== Agent Management =====
-    mapping(address => bool) private _agents;
+    /// @dev Gap for future storage variables (50 slots)
+    uint256[50] private __gap;
 
     // ===== Events =====
-    event AgentAdded(address indexed agent);
-    event AgentRemoved(address indexed agent);
+
+    event Initialized(address indexed admin, string name, string symbol);
 
     // ===== Modifiers =====
-    modifier onlyAgent() {
-        require(_agents[msg.sender] || msg.sender == owner(), "Token: caller is not an agent");
-        _;
-    }
-
-    modifier whenNotPaused() {
-        require(!_paused, "Token: token is paused");
-        _;
-    }
 
     modifier whenNotFrozen(address _userAddress) {
         require(!_frozen[_userAddress], "Token: address is frozen");
         _;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     /**
-     * @dev Constructor
+     * @dev Initializes the token (replaces constructor for upgradeable contracts)
      * @param name_ Token name
      * @param symbol_ Token symbol
      * @param identityRegistry_ Identity registry contract address
      * @param compliance_ Compliance contract address
+     * @param admin_ Initial admin address
      */
-    constructor(
+    function initialize(
         string memory name_,
         string memory symbol_,
         address identityRegistry_,
-        address compliance_
-    ) Ownable(msg.sender) {
+        address compliance_,
+        address admin_
+    ) public initializer {
         require(bytes(name_).length > 0, "Token: name is empty");
         require(bytes(symbol_).length > 0, "Token: symbol is empty");
         require(identityRegistry_ != address(0), "Token: zero identity registry");
         require(compliance_ != address(0), "Token: zero compliance");
+        require(admin_ != address(0), "Token: zero admin");
+
+        __UUPSUpgradeable_init();
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __Pausable_init();
 
         _name = name_;
         _symbol = symbol_;
         _identityRegistry = identityRegistry_;
         _compliance = compliance_;
+
+        // Setup roles
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(Roles.ADMIN_ROLE, admin_);
+        _grantRole(Roles.UPGRADER_ROLE, admin_);
+        _grantRole(Roles.AGENT_ROLE, admin_);
+        _grantRole(Roles.FREEZER_ROLE, admin_);
+        _grantRole(Roles.EMERGENCY_ROLE, admin_);
+
+        emit Initialized(admin_, name_, symbol_);
     }
 
-    // ===== Agent Management =====
+    // ===== UUPS Upgrade Authorization =====
 
-    function addAgent(address _agent) external onlyOwner {
-        require(_agent != address(0), "Token: zero address");
-        require(!_agents[_agent], "Token: already an agent");
-        _agents[_agent] = true;
-        emit AgentAdded(_agent);
-    }
-
-    function removeAgent(address _agent) external onlyOwner {
-        require(_agents[_agent], "Token: not an agent");
-        _agents[_agent] = false;
-        emit AgentRemoved(_agent);
-    }
-
-    function isAgent(address _agent) external view returns (bool) {
-        return _agents[_agent];
-    }
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Roles.UPGRADER_ROLE) {}
 
     // ===== ERC-20 View Functions =====
 
@@ -125,29 +134,28 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
 
     // ===== ERC-3643 View Functions =====
 
-    /// @inheritdoc IERC3643
     function identityRegistry() external view override returns (address) {
         return _identityRegistry;
     }
 
-    /// @inheritdoc IERC3643
     function compliance() external view override returns (address) {
         return _compliance;
     }
 
-    /// @inheritdoc IERC3643
     function isFrozen(address _userAddress) external view override returns (bool) {
         return _frozen[_userAddress];
     }
 
-    /// @inheritdoc IERC3643
     function getFrozenTokens(address _userAddress) external view override returns (uint256) {
         return _frozenTokens[_userAddress];
     }
 
-    /// @inheritdoc IERC3643
-    function paused() external view override returns (bool) {
-        return _paused;
+    function paused() public view override(PausableUpgradeable, IERC3643) returns (bool) {
+        return super.paused();
+    }
+
+    function version() external pure override returns (string memory) {
+        return "1.0.0";
     }
 
     // ===== ERC-20 Transfer Functions =====
@@ -183,63 +191,54 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
 
     // ===== ERC-3643 Admin Functions =====
 
-    /// @inheritdoc IERC3643
-    function setIdentityRegistry(address identityRegistry_) external override onlyOwner {
+    function setIdentityRegistry(address identityRegistry_) external override onlyRole(Roles.ADMIN_ROLE) {
         require(identityRegistry_ != address(0), "Token: zero address");
         _identityRegistry = identityRegistry_;
         emit IdentityRegistryAdded(identityRegistry_);
     }
 
-    /// @inheritdoc IERC3643
-    function setCompliance(address compliance_) external override onlyOwner {
+    function setCompliance(address compliance_) external override onlyRole(Roles.ADMIN_ROLE) {
         require(compliance_ != address(0), "Token: zero address");
         _compliance = compliance_;
         emit ComplianceAdded(compliance_);
     }
 
-    /// @inheritdoc IERC3643
-    function setAddressFrozen(address _userAddress, bool _freeze) external override onlyAgent {
+    function setAddressFrozen(address _userAddress, bool _freeze) external override onlyRole(Roles.FREEZER_ROLE) {
         require(_userAddress != address(0), "Token: zero address");
         _frozen[_userAddress] = _freeze;
         emit AddressFrozen(_userAddress, _freeze, msg.sender);
     }
 
-    /// @inheritdoc IERC3643
-    function freezePartialTokens(address _userAddress, uint256 _amount) external override onlyAgent {
+    function freezePartialTokens(address _userAddress, uint256 _amount) external override onlyRole(Roles.FREEZER_ROLE) {
         require(_userAddress != address(0), "Token: zero address");
         require(_balances[_userAddress] >= _frozenTokens[_userAddress] + _amount, "Token: insufficient balance");
         _frozenTokens[_userAddress] += _amount;
         emit TokensFrozen(_userAddress, _amount);
     }
 
-    /// @inheritdoc IERC3643
-    function unfreezePartialTokens(address _userAddress, uint256 _amount) external override onlyAgent {
+    function unfreezePartialTokens(
+        address _userAddress,
+        uint256 _amount
+    ) external override onlyRole(Roles.FREEZER_ROLE) {
         require(_userAddress != address(0), "Token: zero address");
         require(_frozenTokens[_userAddress] >= _amount, "Token: insufficient frozen tokens");
         _frozenTokens[_userAddress] -= _amount;
         emit TokensUnfrozen(_userAddress, _amount);
     }
 
-    /// @inheritdoc IERC3643
-    function pause() external override onlyAgent {
-        require(!_paused, "Token: already paused");
-        _paused = true;
-        emit Paused(msg.sender);
+    function pause() external override onlyRole(Roles.EMERGENCY_ROLE) {
+        _pause();
     }
 
-    /// @inheritdoc IERC3643
-    function unpause() external override onlyAgent {
-        require(_paused, "Token: not paused");
-        _paused = false;
-        emit Unpaused(msg.sender);
+    function unpause() external override onlyRole(Roles.EMERGENCY_ROLE) {
+        _unpause();
     }
 
-    /// @inheritdoc IERC3643
     function recoveryAddress(
         address _lostWallet,
         address _newWallet,
         address _investorOnchainID
-    ) external override onlyAgent whenNotPaused nonReentrant {
+    ) external override onlyRole(Roles.AGENT_ROLE) whenNotPaused nonReentrant {
         require(_lostWallet != address(0) && _newWallet != address(0), "Token: zero address");
         require(IIdentityRegistry(_identityRegistry).contains(_newWallet), "Token: new wallet not registered");
         require(
@@ -251,7 +250,6 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
         _balances[_lostWallet] = 0;
         _balances[_newWallet] += balance;
 
-        // Transfer frozen tokens state
         _frozenTokens[_newWallet] = _frozenTokens[_lostWallet];
         _frozenTokens[_lostWallet] = 0;
 
@@ -259,7 +257,6 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
         emit RecoverySuccess(_lostWallet, _newWallet, _investorOnchainID);
     }
 
-    /// @inheritdoc IERC3643
     function batchTransfer(
         address[] calldata _toList,
         uint256[] calldata _amounts
@@ -272,12 +269,9 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
         }
     }
 
-    /// @inheritdoc IERC3643
-    function mint(address _to, uint256 _amount) external override onlyAgent whenNotPaused nonReentrant {
+    function mint(address _to, uint256 _amount) external override onlyRole(Roles.AGENT_ROLE) whenNotPaused nonReentrant {
         require(_to != address(0), "Token: mint to zero address");
         require(IIdentityRegistry(_identityRegistry).isVerified(_to), "Token: recipient not verified");
-
-        // Check compliance for minting
         require(ICompliance(_compliance).canTransfer(address(0), _to, _amount), "Token: transfer not compliant");
 
         _totalSupply += _amount;
@@ -288,8 +282,7 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
         emit Transfer(address(0), _to, _amount);
     }
 
-    /// @inheritdoc IERC3643
-    function burn(address _userAddress, uint256 _amount) external override onlyAgent nonReentrant {
+    function burn(address _userAddress, uint256 _amount) external override onlyRole(Roles.AGENT_ROLE) nonReentrant {
         require(_userAddress != address(0), "Token: burn from zero address");
         require(_balances[_userAddress] >= _amount, "Token: burn amount exceeds balance");
         require(
@@ -311,15 +304,8 @@ contract Token is IERC3643, Ownable, ReentrancyGuard {
         require(from != address(0), "Token: transfer from zero address");
         require(to != address(0), "Token: transfer to zero address");
         require(_balances[from] >= amount, "Token: transfer amount exceeds balance");
-        require(
-            _balances[from] - _frozenTokens[from] >= amount,
-            "Token: insufficient unfrozen balance"
-        );
-
-        // Check identity verification
+        require(_balances[from] - _frozenTokens[from] >= amount, "Token: insufficient unfrozen balance");
         require(IIdentityRegistry(_identityRegistry).isVerified(to), "Token: recipient not verified");
-
-        // Check compliance
         require(ICompliance(_compliance).canTransfer(from, to, amount), "Token: transfer not compliant");
 
         unchecked {

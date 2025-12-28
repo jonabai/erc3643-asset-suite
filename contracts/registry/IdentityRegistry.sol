@@ -1,15 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "../interfaces/IIdentityRegistry.sol";
+import "../Roles.sol";
 
 /**
  * @title IdentityRegistry
- * @dev Manages investor identities and their verification status
- * @notice This is a simplified implementation for demonstration purposes
+ * @dev UUPS upgradeable identity registry with role-based access control
+ * @notice Manages investor identities and their verification status
  */
-contract IdentityRegistry is IIdentityRegistry, Ownable {
+contract IdentityRegistry is
+    Initializable,
+    UUPSUpgradeable,
+    AccessControlUpgradeable,
+    IIdentityRegistry
+{
+    // ===== Storage =====
+
     /// @dev Mapping from investor address to identity contract address
     mapping(address => address) private _identities;
 
@@ -19,102 +29,48 @@ contract IdentityRegistry is IIdentityRegistry, Ownable {
     /// @dev Mapping to track registered investors
     mapping(address => bool) private _registered;
 
-    /// @dev Mapping for agent permissions
-    mapping(address => bool) private _agents;
+    /// @dev Gap for future storage variables
+    uint256[50] private __gap;
 
-    /// @dev Emitted when an agent is added
-    event AgentAdded(address indexed agent);
+    // ===== Events =====
 
-    /// @dev Emitted when an agent is removed
-    event AgentRemoved(address indexed agent);
+    event Initialized(address indexed admin);
 
-    modifier onlyAgent() {
-        require(_agents[msg.sender] || msg.sender == owner(), "IdentityRegistry: caller is not an agent");
-        _;
-    }
-
-    constructor() Ownable(msg.sender) {}
-
-    /**
-     * @dev Adds an agent who can manage identities
-     * @param _agent The agent address
-     */
-    function addAgent(address _agent) external onlyOwner {
-        require(_agent != address(0), "IdentityRegistry: zero address");
-        require(!_agents[_agent], "IdentityRegistry: already an agent");
-        _agents[_agent] = true;
-        emit AgentAdded(_agent);
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
 
     /**
-     * @dev Removes an agent
-     * @param _agent The agent address
+     * @dev Initializes the identity registry
+     * @param admin_ Initial admin address
      */
-    function removeAgent(address _agent) external onlyOwner {
-        require(_agents[_agent], "IdentityRegistry: not an agent");
-        _agents[_agent] = false;
-        emit AgentRemoved(_agent);
+    function initialize(address admin_) public initializer {
+        require(admin_ != address(0), "IdentityRegistry: zero admin");
+
+        __UUPSUpgradeable_init();
+        __AccessControl_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(Roles.ADMIN_ROLE, admin_);
+        _grantRole(Roles.UPGRADER_ROLE, admin_);
+        _grantRole(Roles.REGISTRY_MANAGER_ROLE, admin_);
+
+        emit Initialized(admin_);
     }
 
-    /**
-     * @dev Checks if an address is an agent
-     * @param _agent The address to check
-     * @return bool True if agent
-     */
-    function isAgent(address _agent) external view returns (bool) {
-        return _agents[_agent];
-    }
+    // ===== UUPS Upgrade Authorization =====
 
-    /// @inheritdoc IIdentityRegistry
-    function registerIdentity(address _userAddress, address _identity, uint16 _country) external override onlyAgent {
-        require(_userAddress != address(0), "IdentityRegistry: zero address");
-        require(_identity != address(0), "IdentityRegistry: zero identity");
-        require(!_registered[_userAddress], "IdentityRegistry: already registered");
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Roles.UPGRADER_ROLE) {}
 
-        _identities[_userAddress] = _identity;
-        _countries[_userAddress] = _country;
-        _registered[_userAddress] = true;
+    // ===== View Functions =====
 
-        emit IdentityRegistered(_userAddress, _identity);
-        emit CountryUpdated(_userAddress, _country);
-    }
-
-    /// @inheritdoc IIdentityRegistry
-    function deleteIdentity(address _userAddress) external override onlyAgent {
-        require(_registered[_userAddress], "IdentityRegistry: not registered");
-
-        address oldIdentity = _identities[_userAddress];
-        delete _identities[_userAddress];
-        delete _countries[_userAddress];
-        _registered[_userAddress] = false;
-
-        emit IdentityRemoved(_userAddress, oldIdentity);
-    }
-
-    /// @inheritdoc IIdentityRegistry
-    function updateIdentity(address _userAddress, address _identity) external override onlyAgent {
-        require(_registered[_userAddress], "IdentityRegistry: not registered");
-        require(_identity != address(0), "IdentityRegistry: zero identity");
-
-        address oldIdentity = _identities[_userAddress];
-        _identities[_userAddress] = _identity;
-
-        emit IdentityUpdated(oldIdentity, _identity);
-    }
-
-    /// @inheritdoc IIdentityRegistry
-    function updateCountry(address _userAddress, uint16 _country) external override onlyAgent {
-        require(_registered[_userAddress], "IdentityRegistry: not registered");
-
-        _countries[_userAddress] = _country;
-
-        emit CountryUpdated(_userAddress, _country);
+    function version() external pure returns (string memory) {
+        return "1.0.0";
     }
 
     /// @inheritdoc IIdentityRegistry
     function isVerified(address _userAddress) external view override returns (bool) {
-        // In a full implementation, this would check claims against the identity contract
-        // For now, we just check if the user is registered
         return _registered[_userAddress];
     }
 
@@ -131,5 +87,95 @@ contract IdentityRegistry is IIdentityRegistry, Ownable {
     /// @inheritdoc IIdentityRegistry
     function contains(address _userAddress) external view override returns (bool) {
         return _registered[_userAddress];
+    }
+
+    // ===== Registry Management Functions =====
+
+    /// @inheritdoc IIdentityRegistry
+    function registerIdentity(
+        address _userAddress,
+        address _identity,
+        uint16 _country
+    ) external override onlyRole(Roles.REGISTRY_MANAGER_ROLE) {
+        require(_userAddress != address(0), "IdentityRegistry: zero address");
+        require(_identity != address(0), "IdentityRegistry: zero identity");
+        require(!_registered[_userAddress], "IdentityRegistry: already registered");
+
+        _identities[_userAddress] = _identity;
+        _countries[_userAddress] = _country;
+        _registered[_userAddress] = true;
+
+        emit IdentityRegistered(_userAddress, _identity);
+        emit CountryUpdated(_userAddress, _country);
+    }
+
+    /// @inheritdoc IIdentityRegistry
+    function deleteIdentity(address _userAddress) external override onlyRole(Roles.REGISTRY_MANAGER_ROLE) {
+        require(_registered[_userAddress], "IdentityRegistry: not registered");
+
+        address oldIdentity = _identities[_userAddress];
+        delete _identities[_userAddress];
+        delete _countries[_userAddress];
+        _registered[_userAddress] = false;
+
+        emit IdentityRemoved(_userAddress, oldIdentity);
+    }
+
+    /// @inheritdoc IIdentityRegistry
+    function updateIdentity(
+        address _userAddress,
+        address _identity
+    ) external override onlyRole(Roles.REGISTRY_MANAGER_ROLE) {
+        require(_registered[_userAddress], "IdentityRegistry: not registered");
+        require(_identity != address(0), "IdentityRegistry: zero identity");
+
+        address oldIdentity = _identities[_userAddress];
+        _identities[_userAddress] = _identity;
+
+        emit IdentityUpdated(oldIdentity, _identity);
+    }
+
+    /// @inheritdoc IIdentityRegistry
+    function updateCountry(
+        address _userAddress,
+        uint16 _country
+    ) external override onlyRole(Roles.REGISTRY_MANAGER_ROLE) {
+        require(_registered[_userAddress], "IdentityRegistry: not registered");
+
+        _countries[_userAddress] = _country;
+
+        emit CountryUpdated(_userAddress, _country);
+    }
+
+    /**
+     * @dev Batch register multiple identities
+     * @param _userAddresses Array of user addresses
+     * @param _identityAddresses Array of identity addresses
+     * @param _countryCodes Array of country codes
+     */
+    function batchRegisterIdentity(
+        address[] calldata _userAddresses,
+        address[] calldata _identityAddresses,
+        uint16[] calldata _countryCodes
+    ) external onlyRole(Roles.REGISTRY_MANAGER_ROLE) {
+        require(
+            _userAddresses.length == _identityAddresses.length &&
+            _userAddresses.length == _countryCodes.length,
+            "IdentityRegistry: arrays length mismatch"
+        );
+        require(_userAddresses.length <= 100, "IdentityRegistry: batch too large");
+
+        for (uint256 i = 0; i < _userAddresses.length; i++) {
+            require(_userAddresses[i] != address(0), "IdentityRegistry: zero address");
+            require(_identityAddresses[i] != address(0), "IdentityRegistry: zero identity");
+            require(!_registered[_userAddresses[i]], "IdentityRegistry: already registered");
+
+            _identities[_userAddresses[i]] = _identityAddresses[i];
+            _countries[_userAddresses[i]] = _countryCodes[i];
+            _registered[_userAddresses[i]] = true;
+
+            emit IdentityRegistered(_userAddresses[i], _identityAddresses[i]);
+            emit CountryUpdated(_userAddresses[i], _countryCodes[i]);
+        }
     }
 }

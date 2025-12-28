@@ -1,65 +1,120 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "../../interfaces/IComplianceModule.sol";
 import "../../interfaces/ICompliance.sol";
 import "../../interfaces/IERC3643.sol";
 import "../../interfaces/IIdentityRegistry.sol";
+import "../../Roles.sol";
 
 /**
  * @title CountryRestrictModule
- * @dev Compliance module that restricts transfers based on country
- * @notice Can be configured to allow or block specific countries
+ * @dev UUPS upgradeable compliance module that restricts transfers based on country
  */
-contract CountryRestrictModule is IComplianceModule, Ownable {
+contract CountryRestrictModule is
+    Initializable,
+    UUPSUpgradeable,
+    AccessControlUpgradeable,
+    IComplianceModule
+{
+    // ===== Storage =====
+
     /// @dev Mapping from compliance address to restricted countries
     mapping(address => mapping(uint16 => bool)) private _restrictedCountries;
 
-    /// @dev Emitted when a country restriction is added
-    event CountryRestricted(address indexed compliance, uint16 indexed country);
+    /// @dev Gap for future storage variables
+    uint256[50] private __gap;
 
-    /// @dev Emitted when a country restriction is removed
+    // ===== Events =====
+
+    event Initialized(address indexed admin);
+    event CountryRestricted(address indexed compliance, uint16 indexed country);
     event CountryUnrestricted(address indexed compliance, uint16 indexed country);
 
-    constructor() Ownable(msg.sender) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Initializes the module
+     * @param admin_ Initial admin address
+     */
+    function initialize(address admin_) public initializer {
+        require(admin_ != address(0), "CountryRestrictModule: zero admin");
+
+        __UUPSUpgradeable_init();
+        __AccessControl_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(Roles.ADMIN_ROLE, admin_);
+        _grantRole(Roles.UPGRADER_ROLE, admin_);
+        _grantRole(Roles.COMPLIANCE_MANAGER_ROLE, admin_);
+
+        emit Initialized(admin_);
+    }
+
+    // ===== UUPS Upgrade Authorization =====
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Roles.UPGRADER_ROLE) {}
+
+    // ===== View Functions =====
 
     /// @inheritdoc IComplianceModule
     function name() external pure override returns (string memory) {
         return "CountryRestrictModule";
     }
 
-    /**
-     * @dev Adds a country to the restricted list
-     * @param _compliance The compliance contract address
-     * @param _country The country code to restrict
-     */
-    function addCountryRestriction(address _compliance, uint16 _country) external onlyOwner {
+    function version() external pure returns (string memory) {
+        return "1.0.0";
+    }
+
+    function isCountryRestricted(address _compliance, uint16 _country) external view returns (bool) {
+        return _restrictedCountries[_compliance][_country];
+    }
+
+    /// @inheritdoc IComplianceModule
+    function isPlugAndPlay(address /*_compliance*/) external pure override returns (bool) {
+        return true;
+    }
+
+    // ===== Management Functions =====
+
+    function addCountryRestriction(
+        address _compliance,
+        uint16 _country
+    ) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
         require(!_restrictedCountries[_compliance][_country], "CountryRestrictModule: already restricted");
         _restrictedCountries[_compliance][_country] = true;
         emit CountryRestricted(_compliance, _country);
     }
 
-    /**
-     * @dev Removes a country from the restricted list
-     * @param _compliance The compliance contract address
-     * @param _country The country code to unrestrict
-     */
-    function removeCountryRestriction(address _compliance, uint16 _country) external onlyOwner {
+    function removeCountryRestriction(
+        address _compliance,
+        uint16 _country
+    ) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
         require(_restrictedCountries[_compliance][_country], "CountryRestrictModule: not restricted");
         _restrictedCountries[_compliance][_country] = false;
         emit CountryUnrestricted(_compliance, _country);
     }
 
-    /**
-     * @dev Checks if a country is restricted
-     * @param _compliance The compliance contract address
-     * @param _country The country code to check
-     * @return bool True if restricted
-     */
-    function isCountryRestricted(address _compliance, uint16 _country) external view returns (bool) {
-        return _restrictedCountries[_compliance][_country];
+    function batchAddCountryRestrictions(
+        address _compliance,
+        uint16[] calldata _countries
+    ) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
+        require(_countries.length <= 50, "CountryRestrictModule: batch too large");
+        for (uint256 i = 0; i < _countries.length; i++) {
+            if (!_restrictedCountries[_compliance][_countries[i]]) {
+                _restrictedCountries[_compliance][_countries[i]] = true;
+                emit CountryRestricted(_compliance, _countries[i]);
+            }
+        }
     }
+
+    // ===== Compliance Module Functions =====
 
     /// @inheritdoc IComplianceModule
     function moduleCheck(
@@ -71,7 +126,6 @@ contract CountryRestrictModule is IComplianceModule, Ownable {
         address token = ICompliance(_compliance).getTokenBound();
         address identityRegistry = IERC3643(token).identityRegistry();
 
-        // Skip check for zero address (minting/burning)
         if (_from != address(0)) {
             uint16 fromCountry = IIdentityRegistry(identityRegistry).investorCountry(_from);
             if (_restrictedCountries[_compliance][fromCountry]) {
@@ -95,22 +149,11 @@ contract CountryRestrictModule is IComplianceModule, Ownable {
         address /*_from*/,
         address /*_to*/,
         uint256 /*_value*/
-    ) external override {
-        // No action needed for this module
-    }
+    ) external override {}
 
     /// @inheritdoc IComplianceModule
-    function moduleMintAction(address /*_compliance*/, address /*_to*/, uint256 /*_value*/) external override {
-        // No action needed for this module
-    }
+    function moduleMintAction(address /*_compliance*/, address /*_to*/, uint256 /*_value*/) external override {}
 
     /// @inheritdoc IComplianceModule
-    function moduleBurnAction(address /*_compliance*/, address /*_from*/, uint256 /*_value*/) external override {
-        // No action needed for this module
-    }
-
-    /// @inheritdoc IComplianceModule
-    function isPlugAndPlay(address /*_compliance*/) external pure override returns (bool) {
-        return true;
-    }
+    function moduleBurnAction(address /*_compliance*/, address /*_from*/, uint256 /*_value*/) external override {}
 }

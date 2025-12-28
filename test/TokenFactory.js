@@ -7,13 +7,13 @@ describe("TokenFactory", function () {
     const [owner, admin, factoryUser, investor1, investor2] = await hre.ethers.getSigners();
 
     // Deploy implementations
-    const Token = await hre.ethers.getContractFactory("TokenUpgradeable");
+    const Token = await hre.ethers.getContractFactory("Token");
     const tokenImpl = await Token.deploy();
 
-    const IdentityRegistry = await hre.ethers.getContractFactory("IdentityRegistryUpgradeable");
+    const IdentityRegistry = await hre.ethers.getContractFactory("IdentityRegistry");
     const registryImpl = await IdentityRegistry.deploy();
 
-    const Compliance = await hre.ethers.getContractFactory("ModularComplianceUpgradeable");
+    const Compliance = await hre.ethers.getContractFactory("ModularCompliance");
     const complianceImpl = await Compliance.deploy();
 
     // Deploy factory
@@ -198,13 +198,13 @@ describe("TokenFactory", function () {
       const { factory, admin } = await loadFixture(deployFactoryFixture);
 
       // Deploy new implementations
-      const NewToken = await hre.ethers.getContractFactory("TokenUpgradeable");
+      const NewToken = await hre.ethers.getContractFactory("Token");
       const newTokenImpl = await NewToken.deploy();
 
-      const NewRegistry = await hre.ethers.getContractFactory("IdentityRegistryUpgradeable");
+      const NewRegistry = await hre.ethers.getContractFactory("IdentityRegistry");
       const newRegistryImpl = await NewRegistry.deploy();
 
-      const NewCompliance = await hre.ethers.getContractFactory("ModularComplianceUpgradeable");
+      const NewCompliance = await hre.ethers.getContractFactory("ModularCompliance");
       const newComplianceImpl = await NewCompliance.deploy();
 
       await expect(

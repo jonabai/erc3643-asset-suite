@@ -2,18 +2,18 @@ const { expect } = require("chai");
 const hre = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 
-describe("TokenUpgradeable", function () {
+describe("Token", function () {
   async function deployTokenFixture() {
     const [owner, admin, agent, freezer, investor1, investor2, unregistered] = await hre.ethers.getSigners();
 
     // Deploy implementations
-    const IdentityRegistry = await hre.ethers.getContractFactory("IdentityRegistryUpgradeable");
+    const IdentityRegistry = await hre.ethers.getContractFactory("IdentityRegistry");
     const identityRegistryImpl = await IdentityRegistry.deploy();
 
-    const Compliance = await hre.ethers.getContractFactory("ModularComplianceUpgradeable");
+    const Compliance = await hre.ethers.getContractFactory("ModularCompliance");
     const complianceImpl = await Compliance.deploy();
 
-    const Token = await hre.ethers.getContractFactory("TokenUpgradeable");
+    const Token = await hre.ethers.getContractFactory("Token");
     const tokenImpl = await Token.deploy();
 
     // Deploy proxies using upgrades plugin
@@ -194,7 +194,7 @@ describe("TokenUpgradeable", function () {
       const { token, admin } = await loadFixture(deployTokenFixture);
 
       // Deploy new implementation (same contract for testing) - connect as admin who has UPGRADER_ROLE
-      const TokenV2 = await hre.ethers.getContractFactory("TokenUpgradeable", admin);
+      const TokenV2 = await hre.ethers.getContractFactory("Token", admin);
 
       // Upgrade
       const upgraded = await hre.upgrades.upgradeProxy(await token.getAddress(), TokenV2);
@@ -206,7 +206,7 @@ describe("TokenUpgradeable", function () {
     it("Should fail upgrade without UPGRADER_ROLE", async function () {
       const { token, investor1 } = await loadFixture(deployTokenFixture);
 
-      const TokenV2 = await hre.ethers.getContractFactory("TokenUpgradeable", investor1);
+      const TokenV2 = await hre.ethers.getContractFactory("Token", investor1);
       const newImpl = await TokenV2.deploy();
 
       const UPGRADER_ROLE = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("UPGRADER_ROLE"));

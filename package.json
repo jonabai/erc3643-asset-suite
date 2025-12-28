@@ -5,8 +5,6 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
-    "test:upgradeable": "hardhat test test/upgradeable/**/*.js",
-    "test:legacy": "hardhat test test/token/**/*.js test/registry/**/*.js test/compliance/**/*.js",
     "test:gas": "REPORT_GAS=true hardhat test",
     "test:coverage": "hardhat coverage",
     "lint": "solhint 'contracts/**/*.sol'",

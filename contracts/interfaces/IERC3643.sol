@@ -24,11 +24,7 @@ interface IERC3643 is IERC20 {
     /// @dev Emitted when tokens are unfrozen for an address
     event TokensUnfrozen(address indexed userAddress, uint256 amount);
 
-    /// @dev Emitted when the token is paused
-    event Paused(address indexed account);
-
-    /// @dev Emitted when the token is unpaused
-    event Unpaused(address indexed account);
+    // Note: Paused/Unpaused events are inherited from PausableUpgradeable
 
     /// @dev Emitted when tokens are recovered from a lost wallet
     event RecoverySuccess(address indexed lostWallet, address indexed newWallet, address indexed investorOnchainID);
@@ -136,4 +132,10 @@ interface IERC3643 is IERC20 {
      * @return bool True if paused
      */
     function paused() external view returns (bool);
+
+    /**
+     * @dev Returns the version of the token implementation
+     * @return The version string
+     */
+    function version() external pure returns (string memory);
 }

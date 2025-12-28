@@ -1,49 +1,96 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "../../interfaces/IComplianceModule.sol";
 import "../../interfaces/ICompliance.sol";
 import "../../interfaces/IERC3643.sol";
+import "../../Roles.sol";
 
 /**
  * @title MaxBalanceModule
- * @dev Compliance module that enforces maximum balance per holder
- * @notice Prevents any single holder from owning more than a specified amount
+ * @dev UUPS upgradeable compliance module that enforces maximum balance per holder
  */
-contract MaxBalanceModule is IComplianceModule, Ownable {
+contract MaxBalanceModule is
+    Initializable,
+    UUPSUpgradeable,
+    AccessControlUpgradeable,
+    IComplianceModule
+{
+    // ===== Storage =====
+
     /// @dev Mapping from compliance address to max balance limit
     mapping(address => uint256) private _maxBalance;
 
-    /// @dev Emitted when max balance is set
+    /// @dev Gap for future storage variables
+    uint256[50] private __gap;
+
+    // ===== Events =====
+
+    event Initialized(address indexed admin);
     event MaxBalanceSet(address indexed compliance, uint256 maxBalance);
 
-    constructor() Ownable(msg.sender) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Initializes the module
+     * @param admin_ Initial admin address
+     */
+    function initialize(address admin_) public initializer {
+        require(admin_ != address(0), "MaxBalanceModule: zero admin");
+
+        __UUPSUpgradeable_init();
+        __AccessControl_init();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(Roles.ADMIN_ROLE, admin_);
+        _grantRole(Roles.UPGRADER_ROLE, admin_);
+        _grantRole(Roles.COMPLIANCE_MANAGER_ROLE, admin_);
+
+        emit Initialized(admin_);
+    }
+
+    // ===== UUPS Upgrade Authorization =====
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Roles.UPGRADER_ROLE) {}
+
+    // ===== View Functions =====
 
     /// @inheritdoc IComplianceModule
     function name() external pure override returns (string memory) {
         return "MaxBalanceModule";
     }
 
-    /**
-     * @dev Sets the maximum balance for a compliance contract
-     * @param _compliance The compliance contract address
-     * @param _max The maximum balance allowed
-     */
-    function setMaxBalance(address _compliance, uint256 _max) external onlyOwner {
+    function version() external pure returns (string memory) {
+        return "1.0.0";
+    }
+
+    function getMaxBalance(address _compliance) external view returns (uint256) {
+        return _maxBalance[_compliance];
+    }
+
+    /// @inheritdoc IComplianceModule
+    function isPlugAndPlay(address /*_compliance*/) external pure override returns (bool) {
+        return true;
+    }
+
+    // ===== Management Functions =====
+
+    function setMaxBalance(
+        address _compliance,
+        uint256 _max
+    ) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
         require(_max > 0, "MaxBalanceModule: max must be greater than 0");
         _maxBalance[_compliance] = _max;
         emit MaxBalanceSet(_compliance, _max);
     }
 
-    /**
-     * @dev Gets the maximum balance for a compliance contract
-     * @param _compliance The compliance contract address
-     * @return The maximum balance
-     */
-    function getMaxBalance(address _compliance) external view returns (uint256) {
-        return _maxBalance[_compliance];
-    }
+    // ===== Compliance Module Functions =====
 
     /// @inheritdoc IComplianceModule
     function moduleCheck(
@@ -52,13 +99,11 @@ contract MaxBalanceModule is IComplianceModule, Ownable {
         address _to,
         uint256 _value
     ) external view override returns (bool) {
-        // Skip check for zero address (burning)
         if (_to == address(0)) {
             return true;
         }
 
         uint256 maxBal = _maxBalance[_compliance];
-        // If no max balance is set, allow the transfer
         if (maxBal == 0) {
             return true;
         }
@@ -75,22 +120,11 @@ contract MaxBalanceModule is IComplianceModule, Ownable {
         address /*_from*/,
         address /*_to*/,
         uint256 /*_value*/
-    ) external override {
-        // No action needed for this module
-    }
+    ) external override {}
 
     /// @inheritdoc IComplianceModule
-    function moduleMintAction(address /*_compliance*/, address /*_to*/, uint256 /*_value*/) external override {
-        // No action needed for this module
-    }
+    function moduleMintAction(address /*_compliance*/, address /*_to*/, uint256 /*_value*/) external override {}
 
     /// @inheritdoc IComplianceModule
-    function moduleBurnAction(address /*_compliance*/, address /*_from*/, uint256 /*_value*/) external override {
-        // No action needed for this module
-    }
-
-    /// @inheritdoc IComplianceModule
-    function isPlugAndPlay(address /*_compliance*/) external pure override returns (bool) {
-        return true;
-    }
+    function moduleBurnAction(address /*_compliance*/, address /*_from*/, uint256 /*_value*/) external override {}
 }

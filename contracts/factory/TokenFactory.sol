@@ -5,9 +5,9 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import "../token/TokenUpgradeable.sol";
-import "../registry/IdentityRegistryUpgradeable.sol";
-import "../compliance/ModularComplianceUpgradeable.sol";
+import "../token/Token.sol";
+import "../registry/IdentityRegistry.sol";
+import "../compliance/ModularCompliance.sol";
 import "../Roles.sol";
 
 /**
@@ -197,7 +197,7 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
         identityRegistry = _deployProxy(
             identityRegistryImplementation,
             abi.encodeWithSelector(
-                IdentityRegistryUpgradeable.initialize.selector,
+                IdentityRegistry.initialize.selector,
                 params.registryAdmin
             ),
             keccak256(abi.encodePacked("registry", _deploymentCounter, block.timestamp))
@@ -207,7 +207,7 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
         compliance = _deployProxy(
             complianceImplementation,
             abi.encodeWithSelector(
-                ModularComplianceUpgradeable.initialize.selector,
+                ModularCompliance.initialize.selector,
                 params.complianceAdmin
             ),
             keccak256(abi.encodePacked("compliance", _deploymentCounter, block.timestamp))
@@ -217,7 +217,7 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
         token = _deployProxy(
             tokenImplementation,
             abi.encodeWithSelector(
-                TokenUpgradeable.initialize.selector,
+                Token.initialize.selector,
                 params.name,
                 params.symbol,
                 identityRegistry,
@@ -276,7 +276,7 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
         token = _deployProxy(
             tokenImplementation,
             abi.encodeWithSelector(
-                TokenUpgradeable.initialize.selector,
+                Token.initialize.selector,
                 name,
                 symbol,
                 existingRegistry,
