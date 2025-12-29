@@ -24,12 +24,16 @@ contract Token is
     PausableUpgradeable,
     IERC3643
 {
+    // ===== Constants =====
+
+    uint8 private constant _decimals = 18;
+    uint256 public constant MAX_BATCH_SIZE = 100;
+
     // ===== Storage =====
     // Note: Storage layout must remain consistent across upgrades
 
     string private _name;
     string private _symbol;
-    uint8 private constant _decimals = 18;
     uint256 private _totalSupply;
 
     mapping(address => uint256) private _balances;
@@ -47,6 +51,7 @@ contract Token is
     // ===== Events =====
 
     event Initialized(address indexed admin, string name, string symbol);
+    event ForcedTransfer(address indexed from, address indexed to, uint256 amount, address indexed agent);
 
     // ===== Modifiers =====
 
@@ -150,6 +155,15 @@ contract Token is
         return _frozenTokens[_userAddress];
     }
 
+    /**
+     * @dev Returns the unfrozen (transferable) balance of an account
+     * @param _userAddress The address to check
+     * @return The unfrozen balance
+     */
+    function getUnfrozenBalance(address _userAddress) external view returns (uint256) {
+        return _balances[_userAddress] - _frozenTokens[_userAddress];
+    }
+
     function paused() public view override(PausableUpgradeable, IERC3643) returns (bool) {
         return super.paused();
     }
@@ -168,8 +182,22 @@ contract Token is
         return true;
     }
 
-    function approve(address spender, uint256 amount) external override returns (bool) {
+    function approve(address spender, uint256 amount) external override whenNotPaused returns (bool) {
         _approve(msg.sender, spender, amount);
+        return true;
+    }
+
+    function increaseAllowance(address spender, uint256 addedValue) external whenNotPaused returns (bool) {
+        _approve(msg.sender, spender, _allowances[msg.sender][spender] + addedValue);
+        return true;
+    }
+
+    function decreaseAllowance(address spender, uint256 subtractedValue) external whenNotPaused returns (bool) {
+        uint256 currentAllowance = _allowances[msg.sender][spender];
+        require(currentAllowance >= subtractedValue, "Token: decreased allowance below zero");
+        unchecked {
+            _approve(msg.sender, spender, currentAllowance - subtractedValue);
+        }
         return true;
     }
 
@@ -177,7 +205,7 @@ contract Token is
         address from,
         address to,
         uint256 amount
-    ) external override whenNotPaused whenNotFrozen(from) nonReentrant returns (bool) {
+    ) external override whenNotPaused whenNotFrozen(from) whenNotFrozen(msg.sender) nonReentrant returns (bool) {
         uint256 currentAllowance = _allowances[from][msg.sender];
         if (currentAllowance != type(uint256).max) {
             require(currentAllowance >= amount, "Token: insufficient allowance");
@@ -240,18 +268,43 @@ contract Token is
         address _investorOnchainID
     ) external override onlyRole(Roles.AGENT_ROLE) whenNotPaused nonReentrant {
         require(_lostWallet != address(0) && _newWallet != address(0), "Token: zero address");
+        require(_lostWallet != _newWallet, "Token: same wallet");
+
+        // Validate lost wallet has the claimed identity
+        require(
+            IIdentityRegistry(_identityRegistry).identity(_lostWallet) == _investorOnchainID,
+            "Token: lost wallet identity mismatch"
+        );
+
+        // Validate new wallet is registered with the same identity
         require(IIdentityRegistry(_identityRegistry).contains(_newWallet), "Token: new wallet not registered");
         require(
             IIdentityRegistry(_identityRegistry).identity(_newWallet) == _investorOnchainID,
-            "Token: identity mismatch"
+            "Token: new wallet identity mismatch"
         );
 
         uint256 balance = _balances[_lostWallet];
         _balances[_lostWallet] = 0;
         _balances[_newWallet] += balance;
 
-        _frozenTokens[_newWallet] = _frozenTokens[_lostWallet];
+        // Transfer frozen tokens amount with overflow protection
+        uint256 combinedFrozen = _frozenTokens[_newWallet] + _frozenTokens[_lostWallet];
+        require(combinedFrozen <= _balances[_newWallet], "Token: frozen exceeds balance");
+        _frozenTokens[_newWallet] = combinedFrozen;
         _frozenTokens[_lostWallet] = 0;
+
+        // Transfer frozen address status
+        if (_frozen[_lostWallet]) {
+            _frozen[_newWallet] = true;
+            _frozen[_lostWallet] = false;
+            emit AddressFrozen(_lostWallet, false, msg.sender);
+            emit AddressFrozen(_newWallet, true, msg.sender);
+        }
+
+        // Notify compliance of the transfer
+        if (balance > 0) {
+            ICompliance(_compliance).transferred(_lostWallet, _newWallet, balance);
+        }
 
         emit Transfer(_lostWallet, _newWallet, balance);
         emit RecoverySuccess(_lostWallet, _newWallet, _investorOnchainID);
@@ -261,16 +314,137 @@ contract Token is
         address[] calldata _toList,
         uint256[] calldata _amounts
     ) external override whenNotPaused whenNotFrozen(msg.sender) nonReentrant {
+        require(_toList.length > 0, "Token: empty arrays");
         require(_toList.length == _amounts.length, "Token: arrays length mismatch");
-        require(_toList.length <= 100, "Token: batch too large");
+        require(_toList.length <= MAX_BATCH_SIZE, "Token: batch too large");
 
         for (uint256 i = 0; i < _toList.length; i++) {
             _transfer(msg.sender, _toList[i], _amounts[i]);
         }
     }
 
+    /**
+     * @dev Forced transfer for regulatory compliance (court orders, etc.)
+     * @notice Bypasses frozen status but still enforces recipient verification and compliance rules
+     * @param _from Address to transfer from
+     * @param _to Address to transfer to
+     * @param _amount Amount to transfer
+     * @return bool Success
+     */
+    function forcedTransfer(
+        address _from,
+        address _to,
+        uint256 _amount
+    ) external onlyRole(Roles.AGENT_ROLE) nonReentrant returns (bool) {
+        require(_from != address(0) && _to != address(0), "Token: zero address");
+        require(_amount > 0, "Token: zero amount");
+        require(_balances[_from] >= _amount, "Token: insufficient balance");
+        require(IIdentityRegistry(_identityRegistry).isVerified(_to), "Token: recipient not verified");
+        require(ICompliance(_compliance).canTransfer(_from, _to, _amount), "Token: transfer not compliant");
+
+        // Forced transfers bypass frozen status but still require recipient verification and compliance
+        // Reduce frozen tokens if necessary
+        if (_frozenTokens[_from] > 0) {
+            if (_amount > _balances[_from] - _frozenTokens[_from]) {
+                uint256 frozenToTransfer = _amount - (_balances[_from] - _frozenTokens[_from]);
+                _frozenTokens[_from] -= frozenToTransfer;
+                emit TokensUnfrozen(_from, frozenToTransfer);
+            }
+        }
+
+        unchecked {
+            _balances[_from] -= _amount;
+        }
+        _balances[_to] += _amount;
+
+        ICompliance(_compliance).transferred(_from, _to, _amount);
+
+        emit Transfer(_from, _to, _amount);
+        emit ForcedTransfer(_from, _to, _amount, msg.sender);
+        return true;
+    }
+
+    /**
+     * @dev Batch forced transfer for regulatory compliance
+     * @notice Bypasses frozen status but still enforces recipient verification and compliance rules
+     * @param _fromList Addresses to transfer from
+     * @param _toList Addresses to transfer to
+     * @param _amounts Amounts to transfer
+     */
+    function batchForcedTransfer(
+        address[] calldata _fromList,
+        address[] calldata _toList,
+        uint256[] calldata _amounts
+    ) external onlyRole(Roles.AGENT_ROLE) nonReentrant {
+        require(_fromList.length > 0, "Token: empty arrays");
+        require(
+            _fromList.length == _toList.length && _fromList.length == _amounts.length,
+            "Token: arrays length mismatch"
+        );
+        require(_fromList.length <= MAX_BATCH_SIZE, "Token: batch too large");
+
+        for (uint256 i = 0; i < _fromList.length; i++) {
+            require(_fromList[i] != address(0) && _toList[i] != address(0), "Token: zero address");
+            require(_amounts[i] > 0, "Token: zero amount");
+            require(_balances[_fromList[i]] >= _amounts[i], "Token: insufficient balance");
+            require(IIdentityRegistry(_identityRegistry).isVerified(_toList[i]), "Token: recipient not verified");
+            require(
+                ICompliance(_compliance).canTransfer(_fromList[i], _toList[i], _amounts[i]),
+                "Token: transfer not compliant"
+            );
+
+            if (_frozenTokens[_fromList[i]] > 0) {
+                if (_amounts[i] > _balances[_fromList[i]] - _frozenTokens[_fromList[i]]) {
+                    uint256 frozenToTransfer = _amounts[i] - (_balances[_fromList[i]] - _frozenTokens[_fromList[i]]);
+                    _frozenTokens[_fromList[i]] -= frozenToTransfer;
+                    emit TokensUnfrozen(_fromList[i], frozenToTransfer);
+                }
+            }
+
+            unchecked {
+                _balances[_fromList[i]] -= _amounts[i];
+            }
+            _balances[_toList[i]] += _amounts[i];
+
+            ICompliance(_compliance).transferred(_fromList[i], _toList[i], _amounts[i]);
+            emit Transfer(_fromList[i], _toList[i], _amounts[i]);
+            emit ForcedTransfer(_fromList[i], _toList[i], _amounts[i], msg.sender);
+        }
+    }
+
+    /**
+     * @dev Batch mint tokens to multiple addresses
+     * @param _toList Addresses to mint to
+     * @param _amounts Amounts to mint
+     */
+    function batchMint(
+        address[] calldata _toList,
+        uint256[] calldata _amounts
+    ) external onlyRole(Roles.AGENT_ROLE) whenNotPaused nonReentrant {
+        require(_toList.length > 0, "Token: empty arrays");
+        require(_toList.length == _amounts.length, "Token: arrays length mismatch");
+        require(_toList.length <= MAX_BATCH_SIZE, "Token: batch too large");
+
+        for (uint256 i = 0; i < _toList.length; i++) {
+            require(_toList[i] != address(0), "Token: mint to zero address");
+            require(_amounts[i] > 0, "Token: zero amount");
+            require(IIdentityRegistry(_identityRegistry).isVerified(_toList[i]), "Token: recipient not verified");
+            require(
+                ICompliance(_compliance).canTransfer(address(0), _toList[i], _amounts[i]),
+                "Token: transfer not compliant"
+            );
+
+            _totalSupply += _amounts[i];
+            _balances[_toList[i]] += _amounts[i];
+
+            ICompliance(_compliance).created(_toList[i], _amounts[i]);
+            emit Transfer(address(0), _toList[i], _amounts[i]);
+        }
+    }
+
     function mint(address _to, uint256 _amount) external override onlyRole(Roles.AGENT_ROLE) whenNotPaused nonReentrant {
         require(_to != address(0), "Token: mint to zero address");
+        require(_amount > 0, "Token: zero amount");
         require(IIdentityRegistry(_identityRegistry).isVerified(_to), "Token: recipient not verified");
         require(ICompliance(_compliance).canTransfer(address(0), _to, _amount), "Token: transfer not compliant");
 
@@ -282,13 +456,15 @@ contract Token is
         emit Transfer(address(0), _to, _amount);
     }
 
-    function burn(address _userAddress, uint256 _amount) external override onlyRole(Roles.AGENT_ROLE) nonReentrant {
+    function burn(address _userAddress, uint256 _amount) external override onlyRole(Roles.AGENT_ROLE) whenNotPaused nonReentrant {
         require(_userAddress != address(0), "Token: burn from zero address");
+        require(_amount > 0, "Token: zero amount");
         require(_balances[_userAddress] >= _amount, "Token: burn amount exceeds balance");
         require(
             _balances[_userAddress] - _frozenTokens[_userAddress] >= _amount,
             "Token: frozen tokens cannot be burned"
         );
+        require(ICompliance(_compliance).canTransfer(_userAddress, address(0), _amount), "Token: burn not compliant");
 
         _balances[_userAddress] -= _amount;
         _totalSupply -= _amount;
@@ -303,15 +479,18 @@ contract Token is
     function _transfer(address from, address to, uint256 amount) internal {
         require(from != address(0), "Token: transfer from zero address");
         require(to != address(0), "Token: transfer to zero address");
+        require(amount > 0, "Token: zero amount");
         require(_balances[from] >= amount, "Token: transfer amount exceeds balance");
         require(_balances[from] - _frozenTokens[from] >= amount, "Token: insufficient unfrozen balance");
         require(IIdentityRegistry(_identityRegistry).isVerified(to), "Token: recipient not verified");
         require(ICompliance(_compliance).canTransfer(from, to, amount), "Token: transfer not compliant");
 
+        // Safe: from balance check above guarantees no underflow
         unchecked {
             _balances[from] -= amount;
-            _balances[to] += amount;
         }
+        // Keep overflow check for recipient balance
+        _balances[to] += amount;
 
         ICompliance(_compliance).transferred(from, to, amount);
 

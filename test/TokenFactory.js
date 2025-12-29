@@ -100,6 +100,99 @@ describe("TokenFactory", function () {
       expect(deployment.exists).to.be.true;
     });
 
+    it("Should automatically bind token to compliance", async function () {
+      const { factory, factoryUser, admin } = await loadFixture(deployFactoryFixture);
+
+      const params = {
+        name: "Test Security Token",
+        symbol: "TST",
+        tokenAdmin: admin.address,
+        registryAdmin: admin.address,
+        complianceAdmin: admin.address,
+      };
+
+      await factory.connect(factoryUser).deployTokenSuite(params);
+
+      const deployedTokens = await factory.getDeployedTokens();
+      const deployment = await factory.getTokenDeployment(deployedTokens[0]);
+
+      // Get compliance contract and verify token is bound
+      const Compliance = await hre.ethers.getContractFactory("ModularCompliance");
+      const compliance = Compliance.attach(deployment.compliance);
+
+      expect(await compliance.getTokenBound()).to.equal(deployment.token);
+    });
+
+    it("Should transfer compliance admin roles to complianceAdmin", async function () {
+      const { factory, factoryUser, admin } = await loadFixture(deployFactoryFixture);
+
+      const params = {
+        name: "Test Security Token",
+        symbol: "TST",
+        tokenAdmin: admin.address,
+        registryAdmin: admin.address,
+        complianceAdmin: admin.address,
+      };
+
+      await factory.connect(factoryUser).deployTokenSuite(params);
+
+      const deployedTokens = await factory.getDeployedTokens();
+      const deployment = await factory.getTokenDeployment(deployedTokens[0]);
+
+      // Get compliance contract and verify admin has roles
+      const Compliance = await hre.ethers.getContractFactory("ModularCompliance");
+      const compliance = Compliance.attach(deployment.compliance);
+
+      const ADMIN_ROLE = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("ADMIN_ROLE"));
+      const COMPLIANCE_MANAGER_ROLE = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("COMPLIANCE_MANAGER_ROLE"));
+
+      expect(await compliance.hasRole(ADMIN_ROLE, admin.address)).to.be.true;
+      expect(await compliance.hasRole(COMPLIANCE_MANAGER_ROLE, admin.address)).to.be.true;
+
+      // Verify factory no longer has roles
+      expect(await compliance.hasRole(ADMIN_ROLE, await factory.getAddress())).to.be.false;
+    });
+
+    it("Should allow transfers after factory deployment", async function () {
+      const { factory, factoryUser, admin, investor1, investor2 } = await loadFixture(deployFactoryFixture);
+
+      const params = {
+        name: "Test Security Token",
+        symbol: "TST",
+        tokenAdmin: admin.address,
+        registryAdmin: admin.address,
+        complianceAdmin: admin.address,
+      };
+
+      await factory.connect(factoryUser).deployTokenSuite(params);
+
+      const deployedTokens = await factory.getDeployedTokens();
+      const deployment = await factory.getTokenDeployment(deployedTokens[0]);
+
+      // Get contracts
+      const Token = await hre.ethers.getContractFactory("Token");
+      const token = Token.attach(deployment.token);
+
+      const IdentityRegistry = await hre.ethers.getContractFactory("IdentityRegistry");
+      const registry = IdentityRegistry.attach(deployment.identityRegistry);
+
+      // Grant roles and register investors
+      const AGENT_ROLE = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("AGENT_ROLE"));
+      const REGISTRY_MANAGER_ROLE = hre.ethers.keccak256(hre.ethers.toUtf8Bytes("REGISTRY_MANAGER_ROLE"));
+
+      await token.connect(admin).grantRole(AGENT_ROLE, admin.address);
+      await registry.connect(admin).grantRole(REGISTRY_MANAGER_ROLE, admin.address);
+
+      await registry.connect(admin).registerIdentity(investor1.address, investor1.address, 840);
+      await registry.connect(admin).registerIdentity(investor2.address, investor2.address, 826);
+
+      // Mint and transfer
+      await token.connect(admin).mint(investor1.address, hre.ethers.parseEther("1000"));
+      await token.connect(investor1).transfer(investor2.address, hre.ethers.parseEther("100"));
+
+      expect(await token.balanceOf(investor2.address)).to.equal(hre.ethers.parseEther("100"));
+    });
+
     it("Should deploy multiple token suites", async function () {
       const { factory, factoryUser, admin } = await loadFixture(deployFactoryFixture);
 
@@ -190,6 +283,58 @@ describe("TokenFactory", function () {
       // Verify second token uses same registry
       const secondDeployment = await factory.getTokenDeployment((await factory.getDeployedTokens())[1]);
       expect(secondDeployment.identityRegistry).to.equal(firstDeployment.identityRegistry);
+    });
+
+    it("Should fail deployTokenOnly with non-contract registry", async function () {
+      const { factory, factoryUser, admin, investor1 } = await loadFixture(deployFactoryFixture);
+
+      // First deploy a suite to get a valid compliance
+      await factory.connect(factoryUser).deployTokenSuite({
+        name: "First Token",
+        symbol: "FT1",
+        tokenAdmin: admin.address,
+        registryAdmin: admin.address,
+        complianceAdmin: admin.address,
+      });
+      const tokens = await factory.getDeployedTokens();
+      const deployment = await factory.getTokenDeployment(tokens[0]);
+
+      // Try to deploy with EOA as registry
+      await expect(
+        factory.connect(factoryUser).deployTokenOnly(
+          "Second Token",
+          "ST2",
+          investor1.address, // EOA, not a contract
+          deployment.compliance,
+          admin.address
+        )
+      ).to.be.revertedWith("TokenFactory: registry not a contract");
+    });
+
+    it("Should fail deployTokenOnly with non-contract compliance", async function () {
+      const { factory, factoryUser, admin, investor1 } = await loadFixture(deployFactoryFixture);
+
+      // First deploy a suite to get a valid registry
+      await factory.connect(factoryUser).deployTokenSuite({
+        name: "First Token",
+        symbol: "FT1",
+        tokenAdmin: admin.address,
+        registryAdmin: admin.address,
+        complianceAdmin: admin.address,
+      });
+      const tokens = await factory.getDeployedTokens();
+      const deployment = await factory.getTokenDeployment(tokens[0]);
+
+      // Try to deploy with EOA as compliance
+      await expect(
+        factory.connect(factoryUser).deployTokenOnly(
+          "Second Token",
+          "ST2",
+          deployment.identityRegistry,
+          investor1.address, // EOA, not a contract
+          admin.address
+        )
+      ).to.be.revertedWith("TokenFactory: compliance not a contract");
     });
   });
 

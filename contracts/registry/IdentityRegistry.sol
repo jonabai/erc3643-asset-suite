@@ -18,6 +18,10 @@ contract IdentityRegistry is
     AccessControlUpgradeable,
     IIdentityRegistry
 {
+    // ===== Constants =====
+
+    uint256 public constant MAX_BATCH_SIZE = 100;
+
     // ===== Storage =====
 
     /// @dev Mapping from investor address to identity contract address
@@ -132,7 +136,7 @@ contract IdentityRegistry is
         address oldIdentity = _identities[_userAddress];
         _identities[_userAddress] = _identity;
 
-        emit IdentityUpdated(oldIdentity, _identity);
+        emit IdentityUpdated(_userAddress, oldIdentity, _identity);
     }
 
     /// @inheritdoc IIdentityRegistry
@@ -158,12 +162,13 @@ contract IdentityRegistry is
         address[] calldata _identityAddresses,
         uint16[] calldata _countryCodes
     ) external onlyRole(Roles.REGISTRY_MANAGER_ROLE) {
+        require(_userAddresses.length > 0, "IdentityRegistry: empty arrays");
         require(
             _userAddresses.length == _identityAddresses.length &&
             _userAddresses.length == _countryCodes.length,
             "IdentityRegistry: arrays length mismatch"
         );
-        require(_userAddresses.length <= 100, "IdentityRegistry: batch too large");
+        require(_userAddresses.length <= MAX_BATCH_SIZE, "IdentityRegistry: batch too large");
 
         for (uint256 i = 0; i < _userAddresses.length; i++) {
             require(_userAddresses[i] != address(0), "IdentityRegistry: zero address");

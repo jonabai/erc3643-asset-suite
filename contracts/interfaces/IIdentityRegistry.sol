@@ -14,7 +14,7 @@ interface IIdentityRegistry {
     event IdentityRemoved(address indexed investorAddress, address indexed identity);
 
     /// @dev Emitted when an identity is updated
-    event IdentityUpdated(address indexed oldIdentity, address indexed newIdentity);
+    event IdentityUpdated(address indexed investorAddress, address indexed oldIdentity, address indexed newIdentity);
 
     /// @dev Emitted when a country is updated for an investor
     event CountryUpdated(address indexed investorAddress, uint16 indexed country);

@@ -59,7 +59,7 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
     // ===== Events =====
 
     event Initialized(address indexed admin);
-    event ImplementationsSet(address token, address identityRegistry, address compliance);
+    event ImplementationsSet(address indexed token, address indexed identityRegistry, address indexed compliance);
     event TokenSuiteDeployed(
         address indexed token,
         address indexed identityRegistry,
@@ -203,12 +203,12 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
             keccak256(abi.encodePacked("registry", _deploymentCounter, block.timestamp))
         );
 
-        // Deploy Compliance Proxy
+        // Deploy Compliance Proxy (factory as initial admin to bind token)
         compliance = _deployProxy(
             complianceImplementation,
             abi.encodeWithSelector(
                 ModularCompliance.initialize.selector,
-                params.complianceAdmin
+                address(this) // Factory as initial admin
             ),
             keccak256(abi.encodePacked("compliance", _deploymentCounter, block.timestamp))
         );
@@ -227,9 +227,21 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
             keccak256(abi.encodePacked("token", _deploymentCounter, block.timestamp))
         );
 
-        // Bind token to compliance (caller must be admin of compliance)
-        // The compliance admin will need to call bindToken separately
-        // or we can grant the factory temporary access
+        // Bind token to compliance (factory has admin role)
+        ModularCompliance(compliance).bindToken(token);
+
+        // Transfer compliance admin roles to the actual admin
+        ModularCompliance complianceContract = ModularCompliance(compliance);
+        complianceContract.grantRole(complianceContract.DEFAULT_ADMIN_ROLE(), params.complianceAdmin);
+        complianceContract.grantRole(Roles.ADMIN_ROLE, params.complianceAdmin);
+        complianceContract.grantRole(Roles.UPGRADER_ROLE, params.complianceAdmin);
+        complianceContract.grantRole(Roles.COMPLIANCE_MANAGER_ROLE, params.complianceAdmin);
+
+        // Revoke factory's roles
+        complianceContract.revokeRole(Roles.COMPLIANCE_MANAGER_ROLE, address(this));
+        complianceContract.revokeRole(Roles.UPGRADER_ROLE, address(this));
+        complianceContract.revokeRole(Roles.ADMIN_ROLE, address(this));
+        complianceContract.revokeRole(complianceContract.DEFAULT_ADMIN_ROLE(), address(this));
 
         // Store deployment info
         _deployedTokens.push(token);
@@ -270,6 +282,8 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
         require(existingRegistry != address(0), "TokenFactory: zero registry");
         require(existingCompliance != address(0), "TokenFactory: zero compliance");
         require(tokenAdmin != address(0), "TokenFactory: zero admin");
+        require(_isContract(existingRegistry), "TokenFactory: registry not a contract");
+        require(_isContract(existingCompliance), "TokenFactory: compliance not a contract");
 
         _deploymentCounter++;
 
@@ -339,5 +353,14 @@ contract TokenFactory is Initializable, UUPSUpgradeable, AccessControlUpgradeabl
             abi.encodePacked(bytes1(0xff), address(this), salt, keccak256(bytecode))
         );
         return address(uint160(uint256(hash)));
+    }
+
+    /**
+     * @dev Checks if an address is a contract
+     * @param account The address to check
+     * @return True if the address has code (is a contract)
+     */
+    function _isContract(address account) internal view returns (bool) {
+        return account.code.length > 0;
     }
 }

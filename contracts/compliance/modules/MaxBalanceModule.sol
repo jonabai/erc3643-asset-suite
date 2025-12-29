@@ -81,13 +81,26 @@ contract MaxBalanceModule is
 
     // ===== Management Functions =====
 
+    /**
+     * @dev Sets the maximum balance limit for a compliance contract
+     * @param _compliance The compliance contract address
+     * @param _max The maximum balance (0 = unlimited/disabled)
+     */
     function setMaxBalance(
         address _compliance,
         uint256 _max
     ) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
-        require(_max > 0, "MaxBalanceModule: max must be greater than 0");
         _maxBalance[_compliance] = _max;
         emit MaxBalanceSet(_compliance, _max);
+    }
+
+    /**
+     * @dev Removes the maximum balance limit for a compliance contract
+     * @param _compliance The compliance contract address
+     */
+    function removeMaxBalance(address _compliance) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
+        delete _maxBalance[_compliance];
+        emit MaxBalanceSet(_compliance, 0);
     }
 
     // ===== Compliance Module Functions =====
@@ -116,15 +129,21 @@ contract MaxBalanceModule is
 
     /// @inheritdoc IComplianceModule
     function moduleTransferAction(
-        address /*_compliance*/,
+        address _compliance,
         address /*_from*/,
         address /*_to*/,
         uint256 /*_value*/
-    ) external override {}
+    ) external view override {
+        require(msg.sender == _compliance, "MaxBalanceModule: only compliance can call");
+    }
 
     /// @inheritdoc IComplianceModule
-    function moduleMintAction(address /*_compliance*/, address /*_to*/, uint256 /*_value*/) external override {}
+    function moduleMintAction(address _compliance, address /*_to*/, uint256 /*_value*/) external view override {
+        require(msg.sender == _compliance, "MaxBalanceModule: only compliance can call");
+    }
 
     /// @inheritdoc IComplianceModule
-    function moduleBurnAction(address /*_compliance*/, address /*_from*/, uint256 /*_value*/) external override {}
+    function moduleBurnAction(address _compliance, address /*_from*/, uint256 /*_value*/) external view override {
+        require(msg.sender == _compliance, "MaxBalanceModule: only compliance can call");
+    }
 }

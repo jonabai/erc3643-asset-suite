@@ -85,6 +85,14 @@ contract ModularCompliance is
         return _modules;
     }
 
+    /**
+     * @dev Returns the number of bound modules
+     * @return The module count
+     */
+    function getModuleCount() external view returns (uint256) {
+        return _modules.length;
+    }
+
     /// @inheritdoc ICompliance
     function isModuleBound(address _module) external view override returns (bool) {
         return _moduleBound[_module];

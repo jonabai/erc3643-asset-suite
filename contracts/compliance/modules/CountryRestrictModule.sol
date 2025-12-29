@@ -20,6 +20,10 @@ contract CountryRestrictModule is
     AccessControlUpgradeable,
     IComplianceModule
 {
+    // ===== Constants =====
+
+    uint256 public constant MAX_BATCH_SIZE = 50;
+
     // ===== Storage =====
 
     /// @dev Mapping from compliance address to restricted countries
@@ -105,11 +109,26 @@ contract CountryRestrictModule is
         address _compliance,
         uint16[] calldata _countries
     ) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
-        require(_countries.length <= 50, "CountryRestrictModule: batch too large");
+        require(_countries.length > 0, "CountryRestrictModule: empty array");
+        require(_countries.length <= MAX_BATCH_SIZE, "CountryRestrictModule: batch too large");
         for (uint256 i = 0; i < _countries.length; i++) {
             if (!_restrictedCountries[_compliance][_countries[i]]) {
                 _restrictedCountries[_compliance][_countries[i]] = true;
                 emit CountryRestricted(_compliance, _countries[i]);
+            }
+        }
+    }
+
+    function batchRemoveCountryRestrictions(
+        address _compliance,
+        uint16[] calldata _countries
+    ) external onlyRole(Roles.COMPLIANCE_MANAGER_ROLE) {
+        require(_countries.length > 0, "CountryRestrictModule: empty array");
+        require(_countries.length <= MAX_BATCH_SIZE, "CountryRestrictModule: batch too large");
+        for (uint256 i = 0; i < _countries.length; i++) {
+            if (_restrictedCountries[_compliance][_countries[i]]) {
+                _restrictedCountries[_compliance][_countries[i]] = false;
+                emit CountryUnrestricted(_compliance, _countries[i]);
             }
         }
     }
@@ -145,15 +164,21 @@ contract CountryRestrictModule is
 
     /// @inheritdoc IComplianceModule
     function moduleTransferAction(
-        address /*_compliance*/,
+        address _compliance,
         address /*_from*/,
         address /*_to*/,
         uint256 /*_value*/
-    ) external override {}
+    ) external view override {
+        require(msg.sender == _compliance, "CountryRestrictModule: only compliance can call");
+    }
 
     /// @inheritdoc IComplianceModule
-    function moduleMintAction(address /*_compliance*/, address /*_to*/, uint256 /*_value*/) external override {}
+    function moduleMintAction(address _compliance, address /*_to*/, uint256 /*_value*/) external view override {
+        require(msg.sender == _compliance, "CountryRestrictModule: only compliance can call");
+    }
 
     /// @inheritdoc IComplianceModule
-    function moduleBurnAction(address /*_compliance*/, address /*_from*/, uint256 /*_value*/) external override {}
+    function moduleBurnAction(address _compliance, address /*_from*/, uint256 /*_value*/) external view override {
+        require(msg.sender == _compliance, "CountryRestrictModule: only compliance can call");
+    }
 }
